@@ -163,18 +163,17 @@ class GoogleServices:
                 # Let's assume it's the column named "Case ID" or similar.
                 # If we rely on get_all_records(), it creates a dict with keys as headers.
                 records = worksheet.get_all_records()
-            # Lazy load the index
-            if self.email_map is None:
-                st.sidebar.text("Debug: Building Email Index...")
-                records = self.sheet.get_all_records()
-                # Create a map {email: case_id}. standardizing to lower case for search
                 self.email_map = {}
+                # Debug: Show headers found to help troubleshoot
+                if records:
+                    st.sidebar.text(f"Debug: Sheet Headers: {list(records[0].keys())}")
                 for row in records:
                     # Adjust key names based on your actual sheet headers
-                    # Assuming 'Email' and 'Case ID' (or similar)
-                    row_email = str(row.get('Email', '')).strip()
-                    row_case = str(row.get('Case ID', '')).strip()
-                    if row_email:
+                    # Trying multiple variations to be safe
+                    row_email = str(row.get('Email') or row.get('email') or row.get('Email Address') or '').strip()
+                    row_case = str(row.get('Case ID') or row.get('case_id') or row.get('Case_ID') or row.get('案件編號') or '').strip()
+                    
+                    if row_email and row_case:
                         self.email_map[row_email] = row_case
                 st.sidebar.text(f"Debug: Index built with {len(self.email_map)} records.")
             case_id = self.email_map.get(email.strip())
