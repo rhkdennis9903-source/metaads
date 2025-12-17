@@ -101,6 +101,13 @@ class GoogleServices:
         if not self.creds:
             raise FileNotFoundError("Could not find valid credentials (OAuth or Service Account).")
         self.gc = gspread.authorize(self.creds)
+        
+        # Initialize Sheet Object globally for caching
+        try:
+             self.sheet = self.gc.open_by_url(MASTER_SHEET_URL).sheet1
+        except Exception as e:
+             print(f"Warning: Could not open Master Sheet: {e}")
+             self.sheet = None
         self.drive_service = build('drive', 'v3', credentials=self.creds)
         self.docs_service = build('docs', 'v1', credentials=self.creds)
     def get_case_id_by_email(self, email):
