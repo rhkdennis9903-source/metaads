@@ -130,7 +130,7 @@ def main():
             col1, col2 = st.columns(2)
             
             with col1:
-                fill_time = st.text_input("填寫時間", value=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                # fill_time removed as per request (auto-generated on submit)
                 ad_name_id = st.text_input("廣告名稱/編號 (必填)")
                 image_name_id = st.text_input("對應圖片名稱/編號 (必填)")
                 headline = st.text_input("廣告標題")
@@ -151,8 +151,9 @@ def main():
                             doc_id = services.ensure_doc_exists_and_share(st.session_state.case_id, st.session_state.email)
                             
                             # 2. Prepare Data
+                            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             ad_data = {
-                                'fill_time': fill_time,
+                                'fill_time': current_time,
                                 'ad_name_id': ad_name_id,
                                 'image_name_id': image_name_id,
                                 'image_url': image_url,
