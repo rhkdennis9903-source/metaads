@@ -346,47 +346,27 @@ class GoogleServices:
             self.share_file(new_doc_id, customer_email)
             self.share_file(new_doc_id, ADMIN_EMAIL)
             return new_doc_id
-    def _proxy_image_via_drive(self, url, folder_id):
+    def upload_image_to_drive(self, image_file, filename, parent_id):
         """
-        Downloads the image (from Drive or Web) and re-uploads it as a clean
-        public JPG/PNG file in the customer's folder.
-        Returns the new 'webContentLink' which is guaranteed to be direct.
+        Uploads an image file object to Drive under 'Images' subfolder.
+        Returns the High-Res Thumbnail Link.
         """
         try:
-            image_data = None
-            filename = f"temp_image_{datetime.datetime.now().strftime('%H%M%S')}.jpg"
-            # 1. Check if it's a Drive Link -> Use API to download bytes
-            drive_pattern = r"(?:https?://)?(?:drive|docs)\.google\.com/(?:file/d/|open\?id=|uc\?id=)([-w]+)"
-            match = re.search(drive_pattern, url)
+            # 1. Ensure 'Images' folder exists
+            images_folder_id = self.find_folder_in_drive("Images_圖檔", parent_id=parent_id)
+            if not images_folder_id:
+                st.sidebar.text("Debug: Creating 'Images_圖檔' folder...")
+                images_folder_id = self.create_folder("Images_圖檔", parent_id=parent_id)
             
-            if match:
-                file_id = match.group(1)
-                st.sidebar.text(f"Debug: Proxying Drive File {file_id}")
-                # Download bytes from Drive
-                request = self.drive_service.files().get_media(fileId=file_id)
-                fh = io.BytesIO()
-                downloader = MediaIoBaseUpload(fh, mimetype='image/jpeg', resumable=True) # Typo here, logic handles download differently
-                # Actually, for downloading we use MediaIoBaseDownload (not imported) or request.execute() returning bytes
-                # Let's use execute() which returns content if we handle it right, 
-                # but standard way is request = service.files().get_media... 
-                # Simplest way:
-                image_data = request.execute()
-            else:
-                # 2. Web Link -> Use requests
-                st.sidebar.text(f"Debug: Proxying Web URL...")
-                response = requests.get(url, timeout=10)
-                if response.status_code == 200:
-                    image_data = response.content
-                else:
-                    raise Exception(f"Download failed: {response.status_code}")
-            if not image_data:
-                raise Exception("Empty image data")
-            # 3. Upload to Drive (Clean Re-upload)
+            # 2. Upload File
+            # Reset pointer just in case
+            image_file.seek(0)
+            
             file_metadata = {
                 'name': filename,
-                'parents': [folder_id]
+                'parents': [images_folder_id]
             }
-            media = MediaIoBaseUpload(io.BytesIO(image_data), mimetype='image/jpeg', resumable=True)
+            media = MediaIoBaseUpload(image_file, mimetype=image_file.type, resumable=True)
             
             new_file = self.drive_service.files().create(
                 body=file_metadata,
@@ -396,8 +376,8 @@ class GoogleServices:
             ).execute()
             
             new_file_id = new_file.get('id')
-            st.sidebar.success(f"Debug: Proxy Upload Success ({new_file_id})")
-            # 4. Make Public (Reader)
+            st.sidebar.success(f"Debug: Image Upload Success ({new_file_id})")
+            # 3. Make Public (Reader)
             self.drive_service.permissions().create(
                 fileId=new_file_id,
                 body={'role': 'reader', 'type': 'anyone'}
@@ -407,19 +387,18 @@ class GoogleServices:
             import time
             time.sleep(2)
             
-            # 5. Return Direct Link (Prefer Thumbnail for reliability)
+            # 4. Return Direct Link (Prefer Thumbnail for reliability)
             thumb_link = new_file.get('thumbnailLink')
             if thumb_link:
-                # Resize to large (s1600 is usually safe and high res enough for docs)
+                # Resize to large
                 final_link = thumb_link.replace('=s220', '=s1600')
-                print(f"Debug: Using Thumbnail Link: {final_link}")
-                return final_link
+                return final_link, new_file.get('webContentLink')
             
-            return new_file.get('webContentLink')
+            return new_file.get('webContentLink'), new_file.get('webContentLink')
         except Exception as e:
-            print(f"Proxy failed: {e}")
-            st.warning(f"⚠️ 圖片轉存失敗: {e}")
-            return None
+            print(f"Upload failed: {e}")
+            st.warning(f"⚠️ 圖片上傳失敗: {e}")
+            return None, None
     def append_ad_data_to_doc(self, doc_id, ad_data):
         """
         Appends the formatted ad data to the Google Doc.
@@ -463,53 +442,64 @@ class GoogleServices:
         ]
         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
         
-        # --- Image Insertion Disabled by User Request ---
-        # raw_image_url = ad_data.get('image_url')
-        # if raw_image_url and parent_id:
-        #     # PROCESS URL (Advanced Dev Logic: Proxy Upload)
-        #     st.sidebar.text(f"Debug: Proxying image to folder {parent_id}")
-        #     image_url = self._proxy_image_via_drive(raw_image_url, parent_id)
-        #     
-        #     if not image_url:
-        #          # Fallback to raw if proxy failed
-        #          image_url = raw_image_url
-        #     
-        #     try:
-        #         # We need to refresh the index because we just inserted text
-        #         doc = self.docs_service.documents().get(documentId=doc_id).execute()
-        #         content = doc.get('body').get('content')
-        #         last_index = content[-1]['endIndex'] - 1 
-        #         
-        #         image_requests = [
-        #             {
-        #                 'insertInlineImage': {
-        #                     'uri': image_url,
-        #                     'location': {
-        #                         'index': last_index
-        #                     },
-        #                     'objectSize': {
-        #                         'width': {
-        #                             'magnitude': 400,
-        #                             'unit': 'PT'
-        #                         }
-        #                     }
-        #                 }
-        #             },
-        #              {
-        #                 'insertText': {
-        #                      'location': {
-        #                         'index': last_index + 1 # Insert newline after image (conceptually)
-        #                     },
-        #                     'text': "\n"
-        #                 }
-        #             }
-        #         ]
-        #         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
-        #         print(f"Image inserted successfully: {image_url}")
-        #     except Exception as e:
-        #         error_msg = f"圖片插入失敗 (這通常是因為網址不是『公開直連』的圖片連結，例如 Google Drive 預覽連結是無法直接用的): {e}"
-        #         print(error_msg)
-        #         st.warning(f"⚠️ {error_msg}")
+        # --- Image Upload & Insertion Logic ---
+        image_file = ad_data.get('image_file')
+        
+        if image_file and parent_id:
+            # 1. Determine Filename (User Name + Original Ext)
+            # e.g. "Summer_Sale_01" + ".png"
+            original_ext = os.path.splitext(image_file.name)[1]
+            if not original_ext:
+                original_ext = ".jpg" # Default
+            
+            final_filename = f"{ad_data.get('image_name_id')}{original_ext}"
+            
+            # 2. Upload to Drive (Images Subfolder)
+            st.sidebar.text(f"Debug: Uploading image '{final_filename}'...")
+            image_url, web_link = self.upload_image_to_drive(image_file, final_filename, parent_id)
+            
+            # Update ad_data with the web link for display/email
+            ad_data['image_url'] = web_link
+            
+            if image_url:
+                try:
+                    # Refresh index
+                    doc = self.docs_service.documents().get(documentId=doc_id).execute()
+                    content = doc.get('body').get('content')
+                    last_index = content[-1]['endIndex'] - 1 
+                    
+                    image_requests = [
+                        {
+                            'insertInlineImage': {
+                                'uri': image_url,
+                                'location': {
+                                    'index': last_index
+                                },
+                                'objectSize': {
+                                    'width': {
+                                        'magnitude': 400,
+                                        'unit': 'PT'
+                                    }
+                                }
+                            }
+                        },
+                         {
+                            'insertText': {
+                                 'location': {
+                                    'index': last_index + 1
+                                },
+                                'text': "\n"
+                            }
+                        }
+                    ]
+                    self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
+                    print(f"Image inserted: {image_url}")
+                except Exception as e:
+                    error_msg = f"圖片插入失敗: {e}"
+                    print(error_msg)
+                    st.warning(f"⚠️ {error_msg}")
+        
+        return block_name
         return block_name
     def send_confirmation_email(self, to_email, ad_data, doc_url):
         """
