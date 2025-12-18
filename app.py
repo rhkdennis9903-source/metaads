@@ -103,6 +103,8 @@ def main():
         st.session_state.case_id = None
     if 'email' not in st.session_state:
         st.session_state.email = ""
+    if 'doc_id' not in st.session_state:
+        st.session_state.doc_id = None
     # Step 1: Email Verification
     if st.session_state.step == 1:
         st.header("Step 1: 身份驗證")
@@ -117,6 +119,17 @@ def main():
                     if case_id:
                         st.session_state.case_id = case_id
                         st.session_state.email = email_input
+                        
+                        # Pre-check/Create Document immediately
+                        try:
+                            with st.spinner("正在確認雲端共享文件..."):
+                                doc_id = services.ensure_doc_exists_and_share(case_id, email_input)
+                                st.session_state.doc_id = doc_id
+                        except Exception as e:
+                            st.error(f"建立文件失敗: {e}")
+                            # Optional: Fail hard or allow continue?
+                            # For now, let's allow them to continue but they might face issues if doc_id is None
+                        
                         st.session_state.step = 2
                         st.success(f"找到案件編號: {case_id}")
                         st.rerun()
@@ -150,8 +163,15 @@ def main():
                 else:
                     try:
                         with st.spinner("處理中...建立/更新文件中..."):
-                            # 1. Ensure Doc Exists and Share
-                            doc_id = services.ensure_doc_exists_and_share(st.session_state.case_id, st.session_state.email)
+                    try:
+                        with st.spinner("處理中...建立/更新文件中..."):
+                            # 1. Use existing Doc ID
+                            doc_id = st.session_state.doc_id
+                            
+                            # Fallback if for some reason it's missing (e.g. dev restart)
+                            if not doc_id:
+                                doc_id = services.ensure_doc_exists_and_share(st.session_state.case_id, st.session_state.email)
+                                st.session_state.doc_id = doc_id
                             
                             # 2. Prepare Data
                             current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
