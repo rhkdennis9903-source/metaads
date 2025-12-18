@@ -114,11 +114,6 @@ class GoogleServices:
         self.drive_service = build('drive', 'v3', credentials=self.creds)
         self.docs_service = build('docs', 'v1', credentials=self.creds)
     def verify_user(self, email, password):
-        """
-        Verifies if the email and password match the records in the Master Sheet.
-        Assumes Column A is Email/User and Column B is Password.
-        Returns the Case ID if successful, None otherwise.
-    def verify_user(self, email, password):
         try:
             sh = self.gc.open_by_url(MASTER_SHEET_URL)
             worksheet = sh.get_worksheet(0)
