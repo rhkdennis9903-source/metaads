@@ -161,8 +161,7 @@ def main():
                 elif not image_file:
                     st.error("請上傳廣告圖片")
                 else:
-                    try:
-                        with st.spinner("處理中...建立/更新文件中..."):
+
                     try:
                         with st.spinner("處理中...建立/更新文件中..."):
                             # 1. Use existing Doc ID
