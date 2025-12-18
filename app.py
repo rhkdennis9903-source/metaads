@@ -22,7 +22,6 @@ def main():
         # Debug info kept minimal or removed as per request "拿掉管理功能"
         # Letting standard debug info remains if needed, but removing the Admin Zone.
         st.caption("版本: v1.1.0")
-
     st.title("Meta 廣告上刊資訊填寫")
     services = get_google_services()
     # Debug: Print boolean evaluation
@@ -111,7 +110,6 @@ def main():
                 elif not image_file:
                     st.error("請上傳廣告圖片")
                 else:
-
                     try:
                         with st.spinner("處理中...建立/更新文件中..."):
                             # 1. Use existing Doc ID
