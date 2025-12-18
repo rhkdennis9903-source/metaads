@@ -118,7 +118,7 @@ class GoogleServices:
         Verifies if the email and password match the records in the Master Sheet.
         Assumes Column A is Email/User and Column B is Password.
         Returns the Case ID if successful, None otherwise.
-        """
+    def verify_user(self, email, password):
         try:
             sh = self.gc.open_by_url(MASTER_SHEET_URL)
             worksheet = sh.get_worksheet(0)
@@ -127,46 +127,50 @@ class GoogleServices:
             if not all_values:
                 return None
             
-            # Find the user in Column A (Index 0)
-            # We skip the header row usually, but let's check all just in case or start from index 1?
-            # Let's iterate through all rows.
-            
-            found_case_id = None
-            
-            # Identify columns dynamically or strictly A and B as requested?
-            # User said: "AB欄 password" -> A=User?, B=Password? 
-            # Or maybe A=User, B=Password.
-            # Let's assume A=Email, B=Password.
-            
-            # Also need to find Case ID.
             headers = [h.lower().strip() for h in all_values[0]]
-            case_id_col_idx = -1
-            for idx, h in enumerate(headers):
-                 if "case" in h or "id" in h or "編號" in h or "案件" in h:
-                        case_id_col_idx = idx
-                        
-            # If we can't find Case ID column, we might have an issue.
-            # But let's proceed with finding the user first.
             
+            # Dynamic Column Discovery
+            email_col_idx = 0 # Default A
+            case_id_col_idx = 1 # Default B (as per user input)
+            password_col_idx = -1 # Find 'password'
+            
+            for idx, h in enumerate(headers):
+                if "email" in h or "信箱" in h:
+                    email_col_idx = idx
+                if h == "case_id" or "case id" in h or "編號" in h or "案件" in h:
+                    case_id_col_idx = idx
+                if "password" in h or "密碼" in h:
+                    password_col_idx = idx
+            
+            # If password column not found by name, assume it's the LAST column as per user instruction
+            if password_col_idx == -1:
+                password_col_idx = len(headers) - 1
+            
+            # Iterate and verify
             for row in all_values:
-                # Safe access
-                if len(row) < 2:
+                # Skip header row? usually row 1 is header.
+                # If row matches header row content, skip it.
+                if row == all_values[0]:
                     continue
-                
-                row_email = str(row[0]).strip()
-                row_pass = str(row[1]).strip()
-                
-                if row_email == email.strip() and row_pass == password.strip():
-                    # Match found!
-                    # Now get Case ID.
-                    if case_id_col_idx != -1 and len(row) > case_id_col_idx:
-                        found_case_id = str(row[case_id_col_idx]).strip()
-                    else:
-                        # Fallback: maybe it's column C (Index 2)?
-                        if len(row) > 2:
-                             found_case_id = str(row[2]).strip()
                     
-                    return found_case_id
+                if len(row) <= email_col_idx: continue
+                
+                # Careful with row length if password is at the end
+                if len(row) <= password_col_idx:
+                     # Row might be incomplete, skip or treat missing as empty
+                     continue
+                
+                row_email = str(row[email_col_idx]).strip()
+                row_pass = str(row[password_col_idx]).strip()
+                
+                # Compare (Case-insensitive for email? usually yes. Case-sensitive for password)
+                if row_email.lower() == email.strip().lower() and row_pass == password.strip():
+                    # Found user! Return Case ID
+                    if len(row) > case_id_col_idx:
+                        return str(row[case_id_col_idx]).strip()
+                    else:
+                        st.error("找不到 Case ID 欄位資料")
+                        return None
             
             return None
         except Exception as e:
