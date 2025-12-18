@@ -136,7 +136,8 @@ def main():
                 headline = st.text_input("廣告標題")
             
             with col2:
-                image_url = st.text_input("對應圖片雲端網址")
+                # Changed to File Uploader
+                image_file = st.file_uploader("上傳廣告圖片 (必填)", type=['png', 'jpg', 'jpeg'])
                 landing_url = st.text_input("廣告到達網址")
                 main_copy = st.text_area("廣告主文案", height=150)
             submitted = st.form_submit_button("送出並建立文件")
@@ -144,6 +145,8 @@ def main():
             if submitted:
                 if not ad_name_id or not image_name_id:
                     st.error("請填寫 '廣告名稱/編號' 與 '對應圖片名稱/編號'")
+                elif not image_file:
+                    st.error("請上傳廣告圖片")
                 else:
                     try:
                         with st.spinner("處理中...建立/更新文件中..."):
@@ -156,7 +159,7 @@ def main():
                                 'fill_time': current_time,
                                 'ad_name_id': ad_name_id,
                                 'image_name_id': image_name_id,
-                                'image_url': image_url,
+                                'image_file': image_file, # Pass file object
                                 'headline': headline,
                                 'main_copy': main_copy,
                                 'landing_url': landing_url
