@@ -401,8 +401,9 @@ class GoogleServices:
             return None, None
     def append_ad_data_to_doc(self, doc_id, ad_data):
         """
-        Appends the formatted ad data to the Google Doc.
-        ad_data is a dict containing header info.
+        Appends the formatted ad data to the Google Doc using a Table Layout.
+        Left Column: Text Info
+        Right Column: Image Preview
         """
         # Define the block name provided in the request
         block_name = f"{ad_data.get('ad_name_id')}_{ad_data.get('image_name_id')}"
@@ -413,9 +414,10 @@ class GoogleServices:
             parent_id = doc_info.get('parents', [None])[0]
         except:
             parent_id = None
-        # --- Image Upload Logic (Moved to Top) ---
+
+        # --- Image Upload Logic ---
         image_file = ad_data.get('image_file')
-        image_insert_link = None # Link for Docs API (Thumbnail)
+        image_insert_link = None
         
         if image_file and parent_id:
             # 1. Determine Filename
@@ -427,88 +429,132 @@ class GoogleServices:
             
             # 2. Upload
             st.sidebar.text(f"Debug: Uploading image '{final_filename}'...")
-            # thumbnail_link, web_content_link
             thumb, web = self.upload_image_to_drive(image_file, final_filename, parent_id)
             
-            # Update ad_data['image_url'] for text display/email (Use Web Content Link for user)
+            # Update ad_data['image_url'] for text display/email
             ad_data['image_url'] = web
             image_insert_link = thumb
-        # Construct the text content (Now has valid image_url)
-        text_content = (
-            f"\n\n--------------------------------------------------\n"
-            f"廣告組合 ID: {block_name}\n"
-            f"送出時間: {ad_data.get('fill_time')}\n"
-            f"廣告名稱/編號: {ad_data.get('ad_name_id')}\n"
-            f"對應圖片名稱/編號: {ad_data.get('image_name_id')}\n"
-            f"對應圖片雲端網址: {ad_data.get('image_url')}\n"
-            f"廣告標題: {ad_data.get('headline')}\n"
-            f"廣告主文案:\n{ad_data.get('main_copy')}\n"
-            f"廣告到達網址: {ad_data.get('landing_url')}\n"
-            f"--------------------------------------------------\n"
-        )
+        
+        # --- Create Table Layout ---
+        # 1. Insert Table (1 Row, 2 Columns) at Index 1 (Top)
         requests_body = [
-             {
-                'insertText': {
+            {
+                'insertTable': {
+                    'rows': 1,
+                    'columns': 2,
                     'location': {
                         'index': 1
-                    },
-                    'text': text_content
+                    }
                 }
             }
         ]
         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
         
-        # --- Attempt to insert image (using pre-prepared link) ---
-        if image_insert_link:
-            try:
-                # Refresh index
-                doc = self.docs_service.documents().get(documentId=doc_id).execute()
-                content = doc.get('body').get('content')
-                # Find start index (after prepended text). 
-                # Actually since we prepended, the text is at the TOP.
-                # If we want image AFTER text, we should find where text ends?
-                # Or if we want image AT TOP?
-                # User request: "新增的放最上方". So Image should be at Index 1, pushing text down?
-                # Or Text first, then Image?
-                # Let's put Image at Index 1 (Top), then Text will be below it. 
-                # OR Text at Index 1, then Image at Index 1 (Image above Text).
-                # Current code put Text at Index 1.
-                # Let's put Image at Index 1 too, so it pushes Text down.
-                
-                target_index = 1
-                
-                image_requests = [
-                    {
-                        'insertInlineImage': {
-                            'uri': image_insert_link,
-                            'location': {
-                                'index': target_index
-                            },
-                            'objectSize': {
-                                'width': {
-                                    'magnitude': 400,
-                                    'unit': 'PT'
-                                }
+        # 2. Fetch Document to get Table Cell Indices
+        doc = self.docs_service.documents().get(documentId=doc_id).execute()
+        content = doc.get('body').get('content')
+        
+        # The newly inserted table should be the second element (Index 0 is usually SectionBreak/Para)
+        # We look for the Table at the start.
+        # Since we inserted at Index 1, it should be right after the start.
+        
+        table = None
+        for element in content:
+            if 'table' in element:
+                # We assume the first table found is the one we just created (since we prepended it)
+                # Or we can check start indices. 
+                # Let's assume the one with the lowest startIndex (>= 1) is ours.
+                table = element['table']
+                break
+        
+        if not table:
+            st.error("Error: Could not find created table to insert data.")
+            return block_name
+
+        # Get Cell 0 (Left) and Cell 1 (Right)
+        try:
+            row = table['tableRows'][0]
+            cell_left = row['tableCells'][0]
+            cell_right = row['tableCells'][1]
+            
+            # Indices to insert text are the 'startIndex' of the cell's content content.
+            # But usually we insert at cell['content'][0]['startIndex'] if it exists?
+            # Actually simpler: cell['startIndex'] is the start of the cell. 
+            # Content starts at cell['startIndex'] + 1 ? No, API says `startIndex` within the content list.
+            # actually `content` list has structure.
+            # We can just use the index from the API response structure.
+            
+            # Safest: Use cell['content'][-1]['endIndex'] - 1 to append? 
+            # Or just use the cell's `startIndex` + 1?
+            # Docs API: "The content of a table cell is a sequence of StructuralElements."
+            # We want to insert into the empty cell.
+            
+            # Let's use the explicit structure found in `content`.
+            # If the cell is empty, it usually contains a single empty paragraph (ending with \n).
+            
+            left_index = cell_left['content'][0]['startIndex']
+            right_index = cell_right['content'][0]['startIndex']
+            
+            # --- Text Content (Left) ---
+            text_content = (
+                f"廣告組合 ID: {block_name}\n"
+                f"送出時間: {ad_data.get('fill_time')}\n"
+                f"廣告名稱/編號: {ad_data.get('ad_name_id')}\n"
+                f"對應圖片名稱/編號: {ad_data.get('image_name_id')}\n"
+                f"對應圖片雲端網址: {ad_data.get('image_url')}\n"
+                f"廣告標題: {ad_data.get('headline')}\n"
+                f"廣告到達網址: {ad_data.get('landing_url')}\n"
+                f"廣告主文案:\n{ad_data.get('main_copy')}\n"
+            )
+            
+            # Requests for Text and Image
+            # Note: We must be careful about index shifting if we do one by one.
+            # But the cells are separate, so indices inside Cell 2 shouldn't change if we edit Cell 1?
+            # WRONG. Steps in a batchUpdate are applied sequentially, and subsequent indices ARE affected.
+            # So we should insert the Image (Right) first (higher index) then Text (Left) (lower index)?
+            # Yes, standard practice is reverse order of index to avoid shifting issues.
+            
+            # However, if right_index > left_index is guaranteed?
+            # Yes, Left Cell is before Right Cell.
+            
+            batch_requests = []
+            
+            # 1. Insert Image into Right Cell (Higher Index)
+            if image_insert_link:
+                batch_requests.append({
+                    'insertInlineImage': {
+                        'uri': image_insert_link,
+                        'location': {
+                            'index': right_index
+                        },
+                        'objectSize': {
+                            'width': {
+                                'magnitude': 150, # Smaller preview requested
+                                'unit': 'PT'
                             }
                         }
-                    },
-                     {
-                        'insertText': {
-                             'location': {
-                                'index': target_index + 1
-                            },
-                            'text': "\n"
-                        }
                     }
-                ]
-                self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
-                print(f"Image inserted: {image_insert_link}")
-            except Exception as e:
-                error_msg = f"圖片插入失敗: {e}"
-                print(error_msg)
-                st.warning(f"⚠️ {error_msg}")
+                })
+
+            # 2. Insert Text into Left Cell (Lower Index)
+            batch_requests.append({
+                'insertText': {
+                    'location': {
+                        'index': left_index
+                    },
+                    'text': text_content
+                }
+            })
+            
+            self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': batch_requests}).execute()
+            
+            # Optional: Add a spacer line after the table steps it down? 
+            # We already inserted table at Index 1.
+            
+        except Exception as e:
+            st.error(f"Error populating table: {e}")
+            print(f"Table Error: {e}")
         
-        return block_name
         return block_name
     def send_confirmation_email(self, to_email, ad_data, doc_url):
         """
