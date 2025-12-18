@@ -407,9 +407,33 @@ class GoogleServices:
         # Define the block name provided in the request
         block_name = f"{ad_data.get('ad_name_id')}_{ad_data.get('image_name_id')}"
         
-        # Current time for the file update logic if needed, but we write to doc body
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # Construct the text content
+        # We need to determine the folder_id of this doc to store the image
+        try:
+            doc_info = self.drive_service.files().get(fileId=doc_id, fields='parents', supportsAllDrives=True).execute()
+            parent_id = doc_info.get('parents', [None])[0]
+        except:
+            parent_id = None
+        # --- Image Upload Logic (Moved to Top) ---
+        image_file = ad_data.get('image_file')
+        image_insert_link = None # Link for Docs API (Thumbnail)
+        
+        if image_file and parent_id:
+            # 1. Determine Filename
+            original_ext = os.path.splitext(image_file.name)[1]
+            if not original_ext:
+                original_ext = ".jpg"
+            
+            final_filename = f"{ad_data.get('image_name_id')}{original_ext}"
+            
+            # 2. Upload
+            st.sidebar.text(f"Debug: Uploading image '{final_filename}'...")
+            # thumbnail_link, web_content_link
+            thumb, web = self.upload_image_to_drive(image_file, final_filename, parent_id)
+            
+            # Update ad_data['image_url'] for text display/email (Use Web Content Link for user)
+            ad_data['image_url'] = web
+            image_insert_link = thumb
+        # Construct the text content (Now has valid image_url)
         text_content = (
             f"\n\n--------------------------------------------------\n"
             f"廣告組合 ID: {block_name}\n"
@@ -422,14 +446,6 @@ class GoogleServices:
             f"廣告到達網址: {ad_data.get('landing_url')}\n"
             f"--------------------------------------------------\n"
         )
-        
-        # We need to determine the folder_id of this doc to store the proxy image
-        # Retrieve doc parent
-        try:
-            doc_info = self.drive_service.files().get(fileId=doc_id, fields='parents', supportsAllDrives=True).execute()
-            parent_id = doc_info.get('parents', [None])[0]
-        except:
-            parent_id = None # Fallback (won't upload proxy if no parent)
         requests_body = [
              {
                 'insertText': {
@@ -442,62 +458,55 @@ class GoogleServices:
         ]
         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
         
-        # --- Image Upload & Insertion Logic ---
-        image_file = ad_data.get('image_file')
-        
-        if image_file and parent_id:
-            # 1. Determine Filename (User Name + Original Ext)
-            # e.g. "Summer_Sale_01" + ".png"
-            original_ext = os.path.splitext(image_file.name)[1]
-            if not original_ext:
-                original_ext = ".jpg" # Default
-            
-            final_filename = f"{ad_data.get('image_name_id')}{original_ext}"
-            
-            # 2. Upload to Drive (Images Subfolder)
-            st.sidebar.text(f"Debug: Uploading image '{final_filename}'...")
-            image_url, web_link = self.upload_image_to_drive(image_file, final_filename, parent_id)
-            
-            # Update ad_data with the web link for display/email
-            ad_data['image_url'] = web_link
-            
-            if image_url:
-                try:
-                    # Refresh index
-                    doc = self.docs_service.documents().get(documentId=doc_id).execute()
-                    content = doc.get('body').get('content')
-                    last_index = content[-1]['endIndex'] - 1 
-                    
-                    image_requests = [
-                        {
-                            'insertInlineImage': {
-                                'uri': image_url,
-                                'location': {
-                                    'index': last_index
-                                },
-                                'objectSize': {
-                                    'width': {
-                                        'magnitude': 400,
-                                        'unit': 'PT'
-                                    }
+        # --- Attempt to insert image (using pre-prepared link) ---
+        if image_insert_link:
+            try:
+                # Refresh index
+                doc = self.docs_service.documents().get(documentId=doc_id).execute()
+                content = doc.get('body').get('content')
+                # Find start index (after prepended text). 
+                # Actually since we prepended, the text is at the TOP.
+                # If we want image AFTER text, we should find where text ends?
+                # Or if we want image AT TOP?
+                # User request: "新增的放最上方". So Image should be at Index 1, pushing text down?
+                # Or Text first, then Image?
+                # Let's put Image at Index 1 (Top), then Text will be below it. 
+                # OR Text at Index 1, then Image at Index 1 (Image above Text).
+                # Current code put Text at Index 1.
+                # Let's put Image at Index 1 too, so it pushes Text down.
+                
+                target_index = 1
+                
+                image_requests = [
+                    {
+                        'insertInlineImage': {
+                            'uri': image_insert_link,
+                            'location': {
+                                'index': target_index
+                            },
+                            'objectSize': {
+                                'width': {
+                                    'magnitude': 400,
+                                    'unit': 'PT'
                                 }
                             }
-                        },
-                         {
-                            'insertText': {
-                                 'location': {
-                                    'index': last_index + 1
-                                },
-                                'text': "\n"
-                            }
                         }
-                    ]
-                    self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
-                    print(f"Image inserted: {image_url}")
-                except Exception as e:
-                    error_msg = f"圖片插入失敗: {e}"
-                    print(error_msg)
-                    st.warning(f"⚠️ {error_msg}")
+                    },
+                     {
+                        'insertText': {
+                             'location': {
+                                'index': target_index + 1
+                            },
+                            'text': "\n"
+                        }
+                    }
+                ]
+                self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
+                print(f"Image inserted: {image_insert_link}")
+            except Exception as e:
+                error_msg = f"圖片插入失敗: {e}"
+                print(error_msg)
+                st.warning(f"⚠️ {error_msg}")
         
         return block_name
         return block_name
