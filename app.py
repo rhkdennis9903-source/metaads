@@ -19,26 +19,10 @@ def main():
     
     # --- Sidebar (Always show for debugging) ---
     with st.sidebar:
-        st.subheader("管理員專區")
-        
-        # Secrets Diagnostic
-        st.write("--- Secrets 診斷 ---")
-        if hasattr(st, 'secrets'):
-            keys = list(st.secrets.keys())
-            st.write(f"偵測到的 Keys: {keys}")
-            
-            if "gcp_service_account" in st.secrets:
-                st.success("✅ [gcp_service_account] 存在")
-            elif "gcp_json" in st.secrets:
-                st.success("✅ gcp_json 存在")
-            elif "private_key" in st.secrets:
-                st.success("✅ private_key (Root) 存在")
-            else:
-                st.error("❌ 未偵測到有效金鑰")
-        else:
-            st.error("❌ st.secrets 無法讀取")
-            
-        st.write("---")
+        # Debug info kept minimal or removed as per request "拿掉管理功能"
+        # Letting standard debug info remains if needed, but removing the Admin Zone.
+        st.caption("版本: v1.1.0")
+
     st.title("Meta 廣告上刊資訊填寫")
     services = get_google_services()
     # Debug: Print boolean evaluation
@@ -57,45 +41,10 @@ def main():
             
         return
     # Sidebar Actions that require services (only if services exist)
-    with st.sidebar:
-        if st.button("檢查雲端空間 & 檔案"):
-            try:
-                # 1. Check Quota
-                about = services.drive_service.about().get(fields="storageQuota, user").execute()
-                quota = about['storageQuota']
-                limit = int(quota.get('limit', 0))
-                usage = int(quota.get('usage', 0))
-                trash = int(quota.get('usageInDriveTrash', 0))
-                
-                st.write(f"帳號: {about['user']['emailAddress']}")
-                st.write(f"--- 配額資訊 ---")
-                st.write(f"總容量限制: {limit} bytes ({limit / (1024**3):.4f} GB)")
-                st.write(f"已使用: {usage} bytes ({usage / (1024**3):.4f} GB)")
-                st.write(f"垃圾桶佔用: {trash} bytes")
-                
-                # 2. Check File Count
-                st.write(f"--- 檔案列表 (前 20 筆) ---")
-                results = services.drive_service.files().list(
-                    q="'me' in owners and trashed = false",
-                    pageSize=20,
-                    fields="files(id, name, size, createdTime)"
-                ).execute()
-                files = results.get('files', [])
-                
-                if not files:
-                    st.info("查無檔案")
-                else:
-                    for f in files:
-                        f_size = f.get('size', '0')
-                        st.text(f"[{f['createdTime']}] {f['name']} ({f_size} bytes)")
-                        
-                if trash > 0:
-                     if st.button("清空垃圾桶"):
-                        services.drive_service.files().emptyTrash().execute()
-                        st.success("垃圾桶已清空！")
-                        st.rerun()
-            except Exception as e:
-                st.error(f"查詢失敗: {e}")
+    # Sidebar Actions removed
+    # with st.sidebar:
+    #    if st.button("檢查雲端空間 & 檔案"):
+    # ...
     # Session state initialization
     if 'step' not in st.session_state:
         st.session_state.step = 1
@@ -108,14 +57,15 @@ def main():
     # Step 1: Email Verification
     if st.session_state.step == 1:
         st.header("Step 1: 身份驗證")
-        email_input = st.text_input("請輸入您的 Email", value=st.session_state.email)
+        email_input = st.text_input("請輸入您的 Email (帳號)", value=st.session_state.email)
+        password_input = st.text_input("請輸入密碼", type="password")
         
-        if st.button("查詢案件編號"):
-            if not email_input:
-                st.warning("請輸入 Email")
+        if st.button("登入並查詢案件"):
+            if not email_input or not password_input:
+                st.warning("請輸入 Email 與 密碼")
             else:
-                with st.spinner("查詢中..."):
-                    case_id = services.get_case_id_by_email(email_input)
+                with st.spinner("驗證中..."):
+                    case_id = services.verify_user(email_input, password_input)
                     if case_id:
                         st.session_state.case_id = case_id
                         st.session_state.email = email_input
@@ -134,7 +84,7 @@ def main():
                         st.success(f"找到案件編號: {case_id}")
                         st.rerun()
                     else:
-                        st.error("找不到此 Email 對應的案件編號，請確認 Email 是否正確或聯繫管理員。")
+                        st.error("登入失敗：Email 或 密碼錯誤，或者找不到對應的案件編號。")
     # Step 2: Ad Information Form
     elif st.session_state.step == 2:
         st.header(f"Step 2: 填寫上刊資訊 (案件: {st.session_state.case_id})")
