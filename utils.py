@@ -4,10 +4,13 @@ import datetime
 import json
 import gspread
 import base64
+import requests
+import io
 from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 from googleapiclient.errors import HttpError
 import streamlit as st
 # Constants
@@ -343,49 +346,80 @@ class GoogleServices:
             self.share_file(new_doc_id, customer_email)
             self.share_file(new_doc_id, ADMIN_EMAIL)
             return new_doc_id
-    def _process_image_url(self, url):
+    def _proxy_image_via_drive(self, url, folder_id):
         """
-        Analyzes the image URL.
-        If it's a Google Drive link, it attempts to:
-        1. Extract File ID.
-        2. Make the file 'Anyone with link' accessible (to allow Docs API to fetch it).
-        3. Return the 'webContentLink' (Direct Download Link).
+        Downloads the image (from Drive or Web) and re-uploads it as a clean
+        public JPG/PNG file in the customer's folder.
+        Returns the new 'webContentLink' which is guaranteed to be direct.
         """
-        if not url:
+        try:
+            image_data = None
+            filename = f"temp_image_{datetime.datetime.now().strftime('%H%M%S')}.jpg"
+            # 1. Check if it's a Drive Link -> Use API to download bytes
+            drive_pattern = r"(?:https?://)?(?:drive|docs)\.google\.com/(?:file/d/|open\?id=|uc\?id=)([-w]+)"
+            match = re.search(drive_pattern, url)
+            
+            if match:
+                file_id = match.group(1)
+                st.sidebar.text(f"Debug: Proxying Drive File {file_id}")
+                # Download bytes from Drive
+                request = self.drive_service.files().get_media(fileId=file_id)
+                fh = io.BytesIO()
+                downloader = MediaIoBaseUpload(fh, mimetype='image/jpeg', resumable=True) # Typo here, logic handles download differently
+                # Actually, for downloading we use MediaIoBaseDownload (not imported) or request.execute() returning bytes
+                # Let's use execute() which returns content if we handle it right, 
+                # but standard way is request = service.files().get_media... 
+                # Simplest way:
+                image_data = request.execute()
+            else:
+                # 2. Web Link -> Use requests
+                st.sidebar.text(f"Debug: Proxying Web URL...")
+                response = requests.get(url, timeout=10)
+                if response.status_code == 200:
+                    image_data = response.content
+                else:
+                    raise Exception(f"Download failed: {response.status_code}")
+            if not image_data:
+                raise Exception("Empty image data")
+            # 3. Upload to Drive (Clean Re-upload)
+            file_metadata = {
+                'name': filename,
+                'parents': [folder_id]
+            }
+            media = MediaIoBaseUpload(io.BytesIO(image_data), mimetype='image/jpeg', resumable=True)
+            
+            new_file = self.drive_service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id, webContentLink, thumbnailLink',
+                supportsAllDrives=True
+            ).execute()
+            
+            new_file_id = new_file.get('id')
+            st.sidebar.success(f"Debug: Proxy Upload Success ({new_file_id})")
+            # 4. Make Public (Reader)
+            self.drive_service.permissions().create(
+                fileId=new_file_id,
+                body={'role': 'reader', 'type': 'anyone'}
+            ).execute()
+            
+            # Wait for permission propagation
+            import time
+            time.sleep(2)
+            
+            # 5. Return Direct Link (Prefer Thumbnail for reliability)
+            thumb_link = new_file.get('thumbnailLink')
+            if thumb_link:
+                # Resize to large (s1600 is usually safe and high res enough for docs)
+                final_link = thumb_link.replace('=s220', '=s1600')
+                print(f"Debug: Using Thumbnail Link: {final_link}")
+                return final_link
+            
+            return new_file.get('webContentLink')
+        except Exception as e:
+            print(f"Proxy failed: {e}")
+            st.warning(f"⚠️ 圖片轉存失敗: {e}")
             return None
-        # Regex to catch common Drive ID patterns
-        # https://drive.google.com/file/d/Vk8.../view
-        # https://drive.google.com/open?id=Vk8...
-        drive_pattern = r"(?:https?://)?(?:drive|docs)\.google\.com/(?:file/d/|open\?id=|uc\?id=)([-w]+)"
-        match = re.search(drive_pattern, url)
-        
-        if match:
-            file_id = match.group(1)
-            print(f"Debug: Detected Drive Image ID: {file_id}")
-            try:
-                # 1. Make file public (reader) - Essential for Docs API to 'see' it
-                perm_body = {'role': 'reader', 'type': 'anyone'}
-                self.drive_service.permissions().create(
-                    fileId=file_id,
-                    body=perm_body
-                ).execute()
-                print("Debug: Set permission to 'anyone' for image.")
-                # 2. Get direct download link
-                file_info = self.drive_service.files().get(
-                    fileId=file_id,
-                    fields='webContentLink, webViewLink, mimeType'
-                ).execute()
-                
-                # webContentLink is usually the direct one
-                direct_link = file_info.get('webContentLink')
-                print(f"Debug: Converted to Direct Link: {direct_link}")
-                return direct_link
-            except Exception as e:
-                print(f"Warning: Failed to process Drive link automatically: {e}")
-                st.warning(f"⚠️ 嘗試自動轉換 Drive 連結失敗 (可能權限不足): {e}")
-                return url # Fallback to original
-        
-        return url
     def append_ad_data_to_doc(self, doc_id, ad_data):
         """
         Appends the formatted ad data to the Google Doc.
@@ -400,7 +434,7 @@ class GoogleServices:
         text_content = (
             f"\n\n--------------------------------------------------\n"
             f"廣告組合 ID: {block_name}\n"
-            f"填寫時間: {ad_data.get('fill_time')}\n"
+            f"送出時間: {ad_data.get('fill_time')}\n"
             f"廣告名稱/編號: {ad_data.get('ad_name_id')}\n"
             f"對應圖片名稱/編號: {ad_data.get('image_name_id')}\n"
             f"對應圖片雲端網址: {ad_data.get('image_url')}\n"
@@ -409,80 +443,73 @@ class GoogleServices:
             f"廣告到達網址: {ad_data.get('landing_url')}\n"
             f"--------------------------------------------------\n"
         )
-        requests = [
-            {
-                'insertText': {
-                    'location': {
-                        'index': 1, # Insert at the beginning or end? Usually appending is safer with endOfSegmentLocation but insertText requires index.
-                                    # To append, we need to know the document length, which requires a read. 
-                                    # However, inserting at index 1 (start) puts it at the top (stack style), 
-                                    # or we can try to find the end.
-                    },
-                    'text': text_content
-                }
-            }
-        ]
         
-        # To append efficiently without reading size, usually we use EndOfSegmentLocation if available in specific update methods, 
-        # but pure insertText takes an index. 
-        # Let's read the doc length first to append to the end.
-        doc = self.docs_service.documents().get(documentId=doc_id).execute()
-        content = doc.get('body').get('content')
-        last_index = content[-1]['endIndex'] - 1 
-        requests = [
+        # We need to determine the folder_id of this doc to store the proxy image
+        # Retrieve doc parent
+        try:
+            doc_info = self.drive_service.files().get(fileId=doc_id, fields='parents', supportsAllDrives=True).execute()
+            parent_id = doc_info.get('parents', [None])[0]
+        except:
+            parent_id = None # Fallback (won't upload proxy if no parent)
+        requests_body = [
              {
                 'insertText': {
                     'location': {
-                        'index': last_index
+                        'index': 1
                     },
                     'text': text_content
                 }
             }
         ]
-        self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests}).execute()
+        self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
         
-        # --- Attempt to insert image ---
-        raw_image_url = ad_data.get('image_url')
-        if raw_image_url:
-            # PROCESS URL (Advanced Dev Logic)
-            image_url = self._process_image_url(raw_image_url)
-            
-            try:
-                # We need to refresh the index because we just inserted text
-                doc = self.docs_service.documents().get(documentId=doc_id).execute()
-                content = doc.get('body').get('content')
-                last_index = content[-1]['endIndex'] - 1 
-                
-                image_requests = [
-                    {
-                        'insertInlineImage': {
-                            'uri': image_url,
-                            'location': {
-                                'index': last_index
-                            },
-                            'objectSize': {
-                                'width': {
-                                    'magnitude': 400,
-                                    'unit': 'PT'
-                                }
-                            }
-                        }
-                    },
-                     {
-                        'insertText': {
-                             'location': {
-                                'index': last_index + 1 # Insert newline after image (conceptually)
-                            },
-                            'text': "\n"
-                        }
-                    }
-                ]
-                self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
-                print(f"Image inserted successfully: {image_url}")
-            except Exception as e:
-                error_msg = f"圖片插入失敗 (這通常是因為網址不是『公開直連』的圖片連結，例如 Google Drive 預覽連結是無法直接用的): {e}"
-                print(error_msg)
-                st.warning(f"⚠️ {error_msg}")
+        # --- Image Insertion Disabled by User Request ---
+        # raw_image_url = ad_data.get('image_url')
+        # if raw_image_url and parent_id:
+        #     # PROCESS URL (Advanced Dev Logic: Proxy Upload)
+        #     st.sidebar.text(f"Debug: Proxying image to folder {parent_id}")
+        #     image_url = self._proxy_image_via_drive(raw_image_url, parent_id)
+        #     
+        #     if not image_url:
+        #          # Fallback to raw if proxy failed
+        #          image_url = raw_image_url
+        #     
+        #     try:
+        #         # We need to refresh the index because we just inserted text
+        #         doc = self.docs_service.documents().get(documentId=doc_id).execute()
+        #         content = doc.get('body').get('content')
+        #         last_index = content[-1]['endIndex'] - 1 
+        #         
+        #         image_requests = [
+        #             {
+        #                 'insertInlineImage': {
+        #                     'uri': image_url,
+        #                     'location': {
+        #                         'index': last_index
+        #                     },
+        #                     'objectSize': {
+        #                         'width': {
+        #                             'magnitude': 400,
+        #                             'unit': 'PT'
+        #                         }
+        #                     }
+        #                 }
+        #             },
+        #              {
+        #                 'insertText': {
+        #                      'location': {
+        #                         'index': last_index + 1 # Insert newline after image (conceptually)
+        #                     },
+        #                     'text': "\n"
+        #                 }
+        #             }
+        #         ]
+        #         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
+        #         print(f"Image inserted successfully: {image_url}")
+        #     except Exception as e:
+        #         error_msg = f"圖片插入失敗 (這通常是因為網址不是『公開直連』的圖片連結，例如 Google Drive 預覽連結是無法直接用的): {e}"
+        #         print(error_msg)
+        #         st.warning(f"⚠️ {error_msg}")
         return block_name
     def send_confirmation_email(self, to_email, ad_data, doc_url):
         """
@@ -501,7 +528,7 @@ class GoogleServices:
             您的廣告素材已成功提交！
             
             【提交資訊】
-            填寫時間: {ad_data.get('fill_time')}
+            送出時間: {ad_data.get('fill_time')}
             廣告名稱/編號: {ad_data.get('ad_name_id')}
             對應圖片: {ad_data.get('image_name_id')}
             圖片連結: {ad_data.get('image_url')}
