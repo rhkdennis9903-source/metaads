@@ -292,11 +292,13 @@ class GoogleServices:
         if existing_doc_id:
             st.sidebar.success(f"Debug: Doc found ({existing_doc_id})")
             print(f"Document '{doc_name}' already exists. ID: {existing_doc_id}")
-            try:
-                self.share_file(existing_doc_id, customer_email)
-                self.share_file(existing_doc_id, ADMIN_EMAIL)
-            except:
-                pass 
+            # Optimization: Don't re-share if it already exists to avoid spamming emails.
+            # If user lost access, they can contact admin or we can add a specific button for it.
+            # try:
+            #     self.share_file(existing_doc_id, customer_email)
+            #     self.share_file(existing_doc_id, ADMIN_EMAIL)
+            # except:
+            #     pass 
             return existing_doc_id
         else:
             print(f"Creating new document: {doc_name}")
