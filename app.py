@@ -6,7 +6,7 @@ from utils import GoogleServices
 def get_google_services():
     try:
         instance = GoogleServices()
-        st.sidebar.write(f"Debug: Service Instance Created: {type(instance)}")
+        # st.sidebar.write(f"Debug: Service Instance Created: {type(instance)}")
         return instance
     except Exception as e:
         import traceback
@@ -19,7 +19,7 @@ def main():
     
     # --- Sidebar ---
     with st.sidebar:
-        st.caption("版本: v1.2.0 (支援批次上傳 & GIF)")
+        st.caption("版本: v1.3.0 (批次/GIF/格式優化)")
         if st.session_state.get('case_id'):
             st.info(f"當前案件: {st.session_state.case_id}")
             if st.button("登出 / 切換案件"):
@@ -42,7 +42,6 @@ def main():
     if 'case_id' not in st.session_state: st.session_state.case_id = None
     if 'email' not in st.session_state: st.session_state.email = ""
     if 'doc_id' not in st.session_state: st.session_state.doc_id = None
-    # 新增：用於儲存批次清單的 session_state
     if 'ad_queue' not in st.session_state: st.session_state.ad_queue = []
 
     # Step 1: Email & Password Verification
@@ -56,7 +55,6 @@ def main():
                 st.warning("請輸入 Email 與 密碼")
             else:
                 with st.spinner("驗證中..."):
-                    # 假設 utils 裡有這個 verify_user 方法
                     case_id = services.verify_user(email_input, password_input)
                     if case_id:
                         st.session_state.case_id = case_id
@@ -84,10 +82,10 @@ def main():
                 col1, col2 = st.columns(2)
                 with col1:
                     ad_name_id = st.text_input("廣告名稱/編號 (必填)")
-                    image_name_id = st.text_input("對應圖片名稱/編號 (必填)")
+                    # 修正處：UI 顯示改為 圖片名稱
+                    image_name_id = st.text_input("圖片名稱 (必填)")
                     headline = st.text_input("廣告標題")
                 with col2:
-                    # 修改點：支援 gif
                     image_file = st.file_uploader("上傳廣告素材 (支援 PNG, JPG, GIF)", type=['png', 'jpg', 'jpeg', 'gif'])
                     landing_url = st.text_input("廣告到達網址")
                     main_copy = st.text_area("廣告主文案", height=100)
@@ -98,7 +96,7 @@ def main():
                     if not ad_name_id or not image_name_id or not image_file:
                         st.error("請填寫必填欄位並上傳檔案")
                     else:
-                        # 暫存到清單中，不立刻上傳
+                        # 暫存到清單中
                         new_ad = {
                             'ad_name_id': ad_name_id,
                             'image_name_id': image_name_id,
@@ -116,13 +114,13 @@ def main():
         if st.session_state.ad_queue:
             st.subheader(f"📋 待上傳清單 (共 {len(st.session_state.ad_queue)} 則)")
             
-            # 用列表顯示目前暫存的內容
             for idx, ad in enumerate(st.session_state.ad_queue):
                 with st.container(border=True):
                     c1, c2, c3 = st.columns([2, 5, 1])
                     c1.write(f"**{ad['ad_name_id']}**")
-                    c1.caption(f"圖片: {ad['image_name_id']}")
-                    c2.text(f"文案預覽: {ad['main_copy'][:50]}...")
+                    # 修正處：預覽也顯示 圖片名稱
+                    c1.caption(f"圖片名稱: {ad['image_name_id']}")
+                    c2.text(f"文案預覽:\n{ad['main_copy'][:60]}...")
                     if c3.button("移除", key=f"remove_{idx}"):
                         st.session_state.ad_queue.pop(idx)
                         st.rerun()
@@ -142,7 +140,6 @@ def main():
                 for i, ad_data in enumerate(st.session_state.ad_queue):
                     status_text.text(f"正在處理 ({i+1}/{total}): {ad_data['ad_name_id']}...")
                     try:
-                        # 1. 寫入文件 (內含圖片上傳至 Drive)
                         services.append_ad_data_to_doc(doc_id, ad_data, st.session_state.case_id)
                         success_count += 1
                     except Exception as e:
@@ -152,7 +149,7 @@ def main():
                 
                 status_text.success(f"🎉 批次處理完成！成功上傳 {success_count} 則廣告。")
                 
-                # 發送一封彙總確認信
+                # 發送彙總信
                 try:
                     doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
                     services.send_confirmation_email(
@@ -163,7 +160,6 @@ def main():
                 except:
                     pass
                 
-                # 清空清單並噴彩帶
                 st.session_state.ad_queue = []
                 st.balloons()
                 st.info("清單已處理完畢，您可以繼續新增或關閉視窗。")
