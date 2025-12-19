@@ -29,11 +29,11 @@ ADMIN_EMAIL = "rhk9903@gmail.com"
 class GoogleServices:
     def __init__(self, service_account_file='gen-lang-client-0057298651-12025f130563.json'):
         self.creds = None
-        st.sidebar.write("Debug: Initializing GoogleServices...")
+        # st.sidebar.write("Debug: Initializing GoogleServices...")
         self.auth_mode = "service_account"
         self.email_map = None 
         
-        # 憑證載入邏輯 (保留您原始的多重檢查機制)
+        # 憑證載入邏輯
         if "oauth" in st.secrets:
             try:
                 oauth_info = st.secrets["oauth"]
@@ -46,7 +46,7 @@ class GoogleServices:
                     scopes=SCOPES
                 )
                 self.auth_mode = "oauth"
-                st.sidebar.success("Debug: Auth with OAuth Success!")
+                # st.sidebar.success("Debug: Auth with OAuth Success!")
             except Exception as e:
                 st.sidebar.error(f"Debug: OAuth Error {e}")
                 raise e
@@ -172,7 +172,7 @@ class GoogleServices:
                 img_folder_id = self.create_folder(folder_name, parent_id=parent_id)
             
             image_file.seek(0)
-            # 自動偵測 MIME 類型 (例如 image/gif)
+            # 自動偵測 MIME 類型
             mime_type = image_file.type if hasattr(image_file, 'type') else 'image/jpeg'
             
             file_metadata = {'name': filename, 'parents': [img_folder_id]}
@@ -184,7 +184,6 @@ class GoogleServices:
                 supportsAllDrives=True
             ).execute()
             
-            # 設定權限為公開讀取以利插入 Docs
             self.drive_service.permissions().create(
                 fileId=new_file.get('id'), body={'role': 'reader', 'type': 'anyone'}
             ).execute()
@@ -193,7 +192,6 @@ class GoogleServices:
             
             thumb_link = new_file.get('thumbnailLink')
             if thumb_link:
-                # 轉為高品質縮圖網址供 Docs 使用
                 return thumb_link.replace('=s220', '=s1600'), new_file.get('webContentLink')
             return new_file.get('webContentLink'), new_file.get('webContentLink')
         except Exception as e:
@@ -201,22 +199,19 @@ class GoogleServices:
             return None, None
 
     def append_ad_data_to_doc(self, doc_id, ad_data, case_id):
-        """將廣告資料寫入 Google Doc 表格中"""
+        """將廣告資料寫入 Google Doc，標題粗體且內容換行"""
         block_name = f"{ad_data.get('ad_name_id')}_{ad_data.get('image_name_id')}"
         
-        # 取得 Doc 的父資料夾以建立圖片資料夾
         try:
             doc_info = self.drive_service.files().get(fileId=doc_id, fields='parents', supportsAllDrives=True).execute()
             parent_id = doc_info.get('parents', [None])[0]
         except:
             parent_id = None
 
-        # --- 素材處理 (支援 GIF) ---
+        # --- 素材處理 ---
         image_file = ad_data.get('image_file')
         image_insert_link = None
-        
         if image_file and parent_id:
-            # 處理副檔名
             ext = os.path.splitext(image_file.name)[1].lower()
             if not ext:
                 mime_map = {'image/gif': '.gif', 'image/png': '.png', 'image/jpeg': '.jpg'}
@@ -224,59 +219,87 @@ class GoogleServices:
             
             final_filename = f"{ad_data.get('image_name_id')}{ext}"
             customer_prefix = str(case_id).split("_")[0] if "_" in str(case_id) else str(case_id)
-            target_folder = f"{customer_prefix}_img"
-
-            st.sidebar.text(f"正在處理素材: {final_filename}")
-            thumb, web = self.upload_image_to_drive(image_file, final_filename, parent_id, folder_name=target_folder)
+            thumb, web = self.upload_image_to_drive(image_file, final_filename, parent_id, folder_name=f"{customer_prefix}_img")
             ad_data['image_url'] = web
             image_insert_link = thumb
 
+        # --- 建立資料對應表 (標題已修正) ---
+        data_fields = [
+            ("【廣告組合 ID】", block_name),
+            ("【送出時間】", ad_data.get('fill_time', '')),
+            ("【廣告名稱】", ad_data.get('ad_name_id', '')),
+            ("【圖片名稱】", ad_data.get('image_name_id', '')), # 修正處
+            ("【素材網址】", ad_data.get('image_url', '')),
+            ("【廣告標題】", ad_data.get('headline', '')),
+            ("【到達網址】", ad_data.get('landing_url', '')),
+            ("【廣告文案】", ad_data.get('main_copy', ''))
+        ]
+
+        # 組合字串並計算粗體位置
+        full_text = ""
+        bold_ranges = []
+        current_offset = 0
+
+        for label, value in data_fields:
+            line_label = f"{label}\n"
+            line_value = f"{value}\n\n"
+            
+            bold_ranges.append({
+                'start': current_offset,
+                'end': current_offset + len(label)
+            })
+            
+            full_text += line_label + line_value
+            current_offset += len(line_label) + len(line_value)
+
         # --- 寫入表格 ---
-        # 1. 先插入一個 1x2 的表格在最上方
-        requests_body = [{'insertTable': {'rows': 1, 'columns': 2, 'location': {'index': 1}}}]
-        self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
+        self.docs_service.documents().batchUpdate(
+            documentId=doc_id, 
+            body={'requests': [{'insertTable': {'rows': 1, 'columns': 2, 'location': {'index': 1}}}]}
+        ).execute()
         
-        # 2. 獲取表格索引
         doc = self.docs_service.documents().get(documentId=doc_id).execute()
-        content = doc.get('body').get('content')
-        
+        # 尋找剛插入的表格 (假設在最前面)
         table = None
-        for element in content:
-            if 'table' in element:
-                table = element['table'] # 找到剛剛插入的表格
-                break
+        for el in doc.get('body').get('content'):
+             if 'table' in el:
+                 table = el['table']
+                 break
         
         if table:
-            row = table['tableRows'][0]
-            left_idx = row['tableCells'][0]['content'][0]['startIndex']
-            right_idx = row['tableCells'][1]['content'][0]['startIndex']
+            left_idx = table['tableRows'][0]['tableCells'][0]['content'][0]['startIndex']
+            right_idx = table['tableRows'][0]['tableCells'][1]['content'][0]['startIndex']
             
-            text_info = (
-                f"廣告組合 ID: {block_name}\n"
-                f"送出時間: {ad_data.get('fill_time')}\n"
-                f"廣告名稱: {ad_data.get('ad_name_id')}\n"
-                f"圖片編號: {ad_data.get('image_name_id')}\n"
-                f"素材網址: {ad_data.get('image_url')}\n"
-                f"廣告標題: {ad_data.get('headline')}\n"
-                f"到達網址: {ad_data.get('landing_url')}\n"
-                f"廣告文案:\n{ad_data.get('main_copy')}\n"
-            )
-            
-            # 使用倒序插入避免索引偏移
             batch_reqs = []
+            
+            # 插入圖片
             if image_insert_link:
                 batch_reqs.append({
                     'insertInlineImage': {
                         'uri': image_insert_link,
                         'location': {'index': right_idx},
-                        'objectSize': {'width': {'magnitude': 150, 'unit': 'PT'}}
+                        'objectSize': {'width': {'magnitude': 180, 'unit': 'PT'}}
                     }
                 })
             
+            # 插入文字
             batch_reqs.append({
-                'insertText': {'location': {'index': left_idx}, 'text': text_info}
+                'insertText': {'location': {'index': left_idx}, 'text': full_text}
             })
             
+            # 套用粗體
+            for r in bold_ranges:
+                batch_reqs.append({
+                    'updateTextStyle': {
+                        'range': {
+                            'startIndex': left_idx + r['start'],
+                            'endIndex': left_idx + r['end']
+                        },
+                        'textStyle': {'bold': True},
+                        'fields': 'bold'
+                    }
+                })
+                
             self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': batch_reqs}).execute()
         
         return block_name
@@ -288,7 +311,7 @@ class GoogleServices:
         try:
             service = build('gmail', 'v1', credentials=self.creds)
             case_id = ad_data.get('case_id', 'N/A')
-            msg_text = f"素材提交成功！\n案號: {case_id}\n廣告: {ad_data.get('ad_name_id')}\n文件連結: {doc_url}"
+            msg_text = f"素材提交成功！\n案號: {case_id}\n廣告: {ad_data.get('ad_name_id')}\n圖片名稱: {ad_data.get('image_name_id')}\n文件連結: {doc_url}"
             message = MIMEText(msg_text)
             message['to'] = to_email
             message['from'] = 'me'
