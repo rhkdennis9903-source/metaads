@@ -1,4 +1,5 @@
 import os
+import hashlib
 import re
 import datetime
 import json
@@ -91,7 +92,8 @@ class GoogleServices:
             
             for row in all_values[1:]:
                 if len(row) <= max(email_col, pass_col): continue
-                if row[email_col].strip().lower() == email.strip().lower() and row[pass_col].strip() == password.strip():
+                hashed_password = hashlib.sha256(password.strip().encode()).hexdigest()
+                if row[email_col].strip().lower() == email.strip().lower() and row[pass_col].strip() == hashed_password:
                     return str(row[case_id_col]).strip()
             return None
         except Exception as e:
