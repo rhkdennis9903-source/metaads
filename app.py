@@ -1,5 +1,6 @@
 import streamlit as st
 import datetime
+import time
 from utils import GoogleServices
 
 # Initialize Google Services
@@ -26,6 +27,26 @@ def main():
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
                 st.rerun()
+            
+            with st.expander("🔐 修改密碼"):
+                with st.form("pwd_change_form"):
+                    new_pwd = st.text_input("新密碼", type="password")
+                    confirm_pwd = st.text_input("確認新密碼", type="password")
+                    if st.form_submit_button("更新密碼"):
+                        if new_pwd != confirm_pwd:
+                            st.error("兩次輸入的密碼不一致")
+                        elif not new_pwd:
+                            st.error("密碼不能為空")
+                        else:
+                            services = get_google_services()
+                            if services.update_password(st.session_state.email, new_pwd):
+                                st.success("密碼更新成功！請重新登入。")
+                                time.sleep(2)
+                                for key in list(st.session_state.keys()):
+                                    del st.session_state[key]
+                                st.rerun()
+                            else:
+                                st.error("密碼更新失敗，請稍後再試。")
 
     st.title("Meta 廣告上刊資訊填寫")
     services = get_google_services()
