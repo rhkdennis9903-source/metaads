@@ -91,9 +91,12 @@ class GoogleServices:
                 
                 # Check Email match first
                 if row[email_col].strip().lower() == email.strip().lower():
+                    # st.write(f"Debug: Email Matched! Sheet Pass: '{stored_password}' vs Input: '{password}'")
                     # Check Password (Hashed OR Plain Text)
                     if stored_password == hashed_password or stored_password == password.strip():
                         return str(row[case_id_col]).strip()
+                    else:
+                        st.error(f"Debug: 密碼不符。Excel內的密碼: '{stored_password}' vs 輸入密碼: '{password}' (雜湊: {hashed_password})")
             return None
         except Exception as e:
             st.error(f"Error validating user: {e}")
