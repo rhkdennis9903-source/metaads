@@ -114,6 +114,41 @@ class GoogleServices:
             st.error(f"Error reading Sheet: {e}")
             return None
 
+    def update_password(self, email, new_password):
+        """更新使用者密碼"""
+        try:
+            sh = self.gc.open_by_url(MASTER_SHEET_URL)
+            worksheet = sh.get_worksheet(0)
+            all_values = worksheet.get_all_values()
+            
+            headers = [h.lower().strip() for h in all_values[0]]
+            email_col = 0
+            pass_col = -1
+            
+            for idx, h in enumerate(headers):
+                if "email" in h or "信箱" in h: email_col = idx
+                if "password" in h or "密碼" in h: pass_col = idx
+            
+            if pass_col == -1: pass_col = len(headers) - 1
+            
+            # Find row to update
+            cell_row = -1
+            for idx, row in enumerate(all_values):
+                if idx == 0: continue # Skip header
+                if len(row) > email_col and row[email_col].strip().lower() == email.strip().lower():
+                    cell_row = idx + 1 # 1-based index
+                    break
+            
+            if cell_row != -1:
+                hashed_password = hashlib.sha256(new_password.strip().encode()).hexdigest()
+                worksheet.update_cell(cell_row, pass_col + 1, hashed_password) # col is 1-based
+                return True
+            return False
+            
+        except Exception as e:
+            st.error(f"Error updating password: {e}")
+            return False
+
     def find_file_in_drive(self, name, parent_id=None):
         query = f"name = '{name}' and mimeType != 'application/vnd.google-apps.folder' and trashed = false"
         if parent_id: query += f" and '{parent_id}' in parents"
