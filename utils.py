@@ -78,17 +78,16 @@ class GoogleServices:
             all_values = worksheet.get_all_values()
             if not all_values: return None
             
-            headers = [h.lower().strip() for h in all_values[0]]
+            # Fixed Column Mapping: Email=A(0), Password=AB(27), CaseID=B(1) (assuming B based on prev code, but let's stick to user request for A/AB)
+            # User specified: Email=A, Password=AB.
+            # We'll try to keep dynamic for CaseID but enforce A and AB for auth.
             email_col = 0
-            case_id_col = 1
-            pass_col = -1
+            pass_col = 27 
             
-            for idx, h in enumerate(headers):
-                if "email" in h or "信箱" in h: email_col = idx
-                if "case" in h or "編號" in h: case_id_col = idx
-                if "password" in h or "密碼" in h: pass_col = idx
-            
-            if pass_col == -1: pass_col = len(headers) - 1 # 預設最後一欄
+            # Legacy dynamic check backup (optional, but user was specific)
+            # for idx, h in enumerate(headers):
+            #     if "case" in h or "編號" in h: case_id_col = idx
+
             
             for row in all_values[1:]:
                 if len(row) <= max(email_col, pass_col): continue
@@ -121,27 +120,25 @@ class GoogleServices:
             worksheet = sh.get_worksheet(0)
             all_values = worksheet.get_all_values()
             
-            headers = [h.lower().strip() for h in all_values[0]]
+            # Fixed Column Mapping: Email=A(0), Password=AB(27)
             email_col = 0
-            pass_col = -1
-            
-            for idx, h in enumerate(headers):
-                if "email" in h or "信箱" in h: email_col = idx
-                if "password" in h or "密碼" in h: pass_col = idx
-            
-            if pass_col == -1: pass_col = len(headers) - 1
+            pass_col = 27
             
             # Find row to update
             cell_row = -1
             for idx, row in enumerate(all_values):
                 if idx == 0: continue # Skip header
+                # Ensure row has enough columns for Email check
                 if len(row) > email_col and row[email_col].strip().lower() == email.strip().lower():
                     cell_row = idx + 1 # 1-based index
                     break
             
             if cell_row != -1:
                 hashed_password = hashlib.sha256(new_password.strip().encode()).hexdigest()
-                worksheet.update_cell(cell_row, pass_col + 1, hashed_password) # col is 1-based
+                # Ensure we are updating the correct column. 
+                # gspread update_cell takes (row, col) 1-based.
+                # pass_col is 27 (0-based) -> 28 (1-based) which is Column AB
+                worksheet.update_cell(cell_row, pass_col + 1, hashed_password) 
                 return True
             return False
             
