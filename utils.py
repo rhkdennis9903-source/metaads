@@ -78,22 +78,22 @@ class GoogleServices:
             all_values = worksheet.get_all_values()
             if not all_values: return None
             
-            # Fixed Column Mapping: Email=A(0), Password=AB(27), CaseID=B(1) (assuming B based on prev code, but let's stick to user request for A/AB)
-            # User specified: Email=A, Password=AB.
-            # We'll try to keep dynamic for CaseID but enforce A and AB for auth.
+            # Fixed Column Mapping: Email=A(0), Password=AB(27), CaseID=B(1)
             email_col = 0
+            case_id_col = 1
             pass_col = 27 
-            
-            # Legacy dynamic check backup (optional, but user was specific)
-            # for idx, h in enumerate(headers):
-            #     if "case" in h or "編號" in h: case_id_col = idx
-
             
             for row in all_values[1:]:
                 if len(row) <= max(email_col, pass_col): continue
+                
+                stored_password = row[pass_col].strip()
                 hashed_password = hashlib.sha256(password.strip().encode()).hexdigest()
-                if row[email_col].strip().lower() == email.strip().lower() and row[pass_col].strip() == hashed_password:
-                    return str(row[case_id_col]).strip()
+                
+                # Check Email match first
+                if row[email_col].strip().lower() == email.strip().lower():
+                    # Check Password (Hashed OR Plain Text)
+                    if stored_password == hashed_password or stored_password == password.strip():
+                        return str(row[case_id_col]).strip()
             return None
         except Exception as e:
             st.error(f"Error validating user: {e}")
