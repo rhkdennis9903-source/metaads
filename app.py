@@ -15,12 +15,21 @@ def get_google_services():
         st.sidebar.text(traceback.format_exc())
         return str(e)
 
+import io
+
+# Helper class to keep file in memory
+class MemoryFile(io.BytesIO):
+    def __init__(self, content, name, type):
+        super().__init__(content)
+        self.name = name
+        self.type = type
+
 def main():
     st.set_page_config(page_title="Meta 廣告上刊系統", page_icon="📝", layout="wide")
     
     # --- Sidebar ---
     with st.sidebar:
-        st.caption("版本: v1.3.0 (批次/GIF/格式優化)")
+        st.caption("版本: v1.3.1 (修正上傳問題)")
         if st.session_state.get('case_id'):
             st.info(f"當前案件: {st.session_state.case_id}")
             if st.button("登出 / 切換案件"):
@@ -117,11 +126,15 @@ def main():
                     if not ad_name_id or not image_name_id or not image_file:
                         st.error("請填寫必填欄位並上傳檔案")
                     else:
+                        # Convert to MemoryFile immediately
+                        file_content = image_file.read()
+                        mem_file = MemoryFile(file_content, image_file.name, image_file.type)
+                        
                         # 暫存到清單中
                         new_ad = {
                             'ad_name_id': ad_name_id,
                             'image_name_id': image_name_id,
-                            'image_file': image_file,
+                            'image_file': mem_file,
                             'headline': headline,
                             'main_copy': main_copy,
                             'landing_url': landing_url,
